@@ -5,6 +5,7 @@ install_ruby() {
   local version=$2
   local install_path=$3
   local ruby_type=$(get_ruby_type $version)
+  local download_type=$(get_download_type $version)
 
   if [ "$TMPDIR" = "" ]; then
     local tmp_download_dir=$(mktemp -d)
@@ -14,18 +15,21 @@ install_ruby() {
 
   # path to the tar file
   local source_path=$(get_download_file_path $install_type $version $tmp_download_dir)
+  local clone_path=$(get_clone_dir_path $install_type $version $tmp_download_dir)
 
-  download_source $install_type $version $source_path
+  download_source $install_type $version $source_path $clone_path
 
   # running this in a subshell
   # because we don't want to disturb current working dir
   (
     cd $(dirname $source_path)
-    if [ "${ruby_type}" = "jruby" ]; then
-      tar zxf $source_path -C $(dirname $install_path) || exit 1
-      exit 0
-    else
-      tar zxf $source_path || exit 1
+    if [ "${download_type}" = "download" ]; then
+      if [ "${ruby_type}" = "jruby" ]; then
+        tar zxf $source_path -C $(dirname $install_path) || exit 1
+        exit 0
+      else
+        tar zxf $source_path || exit 1
+      fi
     fi
 
     # we use untar path because the extracted dir maybe diff
@@ -40,6 +44,10 @@ install_ruby() {
     # set in os_based_configure_options
     # we unset it here because echo-ing changes the return value of the function
     unset ASDF_PKG_MISSING
+
+    if [ "${download_type}" = "github" ]; then
+      autoconf
+    fi
 
     echo "Building with options: $configure_options"
 
@@ -127,13 +135,55 @@ download_source() {
   local install_type=$1
   local version=$2
   local download_path=$3
+  local clone_dir=$4
   local download_url=$(get_download_url $install_type $version)
+  local download_type=$(get_download_type $version)
 
-  if [ -f $download_path ]; then
-    rm $download_path
+  if [ "$download_type" = "github" ]; then
+    if [ -d $clone_dir ]; then
+      (
+        cd $clone_dir
+        git pull
+      )
+    else
+      git clone https://github.com/ruby/ruby.git $clone_dir
+    fi
+  else
+    echo $download_path
+    if [ -f $download_path ]; then
+      rm $download_path
+    fi
+
+    curl -Lo $download_path $download_url
+  fi
+}
+
+
+get_download_type() {
+  IFS='-' read -a version_info <<< "$1"
+  if [ "${version_info[1]}" = "dev" ]; then
+    echo "github"
+  else
+    echo "download"
+  fi
+}
+
+
+get_clone_dir_path() {
+  local install_type=$1
+  local version=$2
+  local tmp_download_dir=$3
+
+  local ruby_type=$(get_ruby_type $version)
+  local ruby_version=$(get_ruby_version $version)
+
+  if [ "${ruby_type}" = "ruby" ]; then
+    local pkg_name="ruby-${ruby_version}"
+  elif [ "${ruby_type}" = "jruby" ]; then
+    local pkg_name="jruby-bin-${ruby_version}"
   fi
 
-  curl -Lo $download_path $download_url
+  echo "$tmp_download_dir/$pkg_name"
 }
 
 
